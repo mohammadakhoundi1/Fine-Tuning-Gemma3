@@ -1,152 +1,177 @@
-# Fine-Tuning-Gemma2
-Fine Tuning Gemma 2 on SajjadAyoubi/persian_qa
-# Parameter-Efficient Fine-Tuning of Gemma-2 (9B) for Persian Question Answering
+# Parameter-Efficient Adaptation of Gemma 3 for Persian Question Answering
 
-## Overview
+## Abstract
+This repository studies **parameter-efficient fine-tuning of Gemma 3 for Persian question answering** on **PersianQA**. Two controlled experiments were completed under low-resource hardware constraints using **4-bit quantization** and **LoRA**: **Gemma 3 4B Instruct** and **Gemma 3 12B Instruct**. In both settings, fine-tuning improved **overall token-level F1** and **Exact Match (EM)** on the official held-out split. The dominant effect was a strong improvement in **unanswerable-question detection**, accompanied by a measurable decline in **answerable-question F1**. The 12B experiment further demonstrates that a larger Gemma 3 checkpoint can be adapted on a **single NVIDIA T4 (16 GB)** using memory-constrained QLoRA.
 
-This repository implements a parameter-efficient fine-tuning (PEFT) pipeline for adapting the **Gemma-2 9B** decoder-only language model to extractive/generative question answering in **Persian (Farsi)**, a morphologically rich, low-resource language for which few instruction-tuned open-weight models exist. Fine-tuning is performed via **Low-Rank Adaptation (LoRA)** on top of a 4-bit quantized base model, using the [Unsloth](https://github.com/unslothai/unsloth) training framework for memory- and compute-efficient supervised fine-tuning (SFT) on a single consumer/Colab-class GPU.
+---
 
-The pipeline is designed to be model-agnostic within the Unsloth 4-bit model family (`unsloth/gemma-2-9b-bnb-4bit`, `unsloth/gemma-2-27b-bnb-4bit`, and comparable Llama/Mistral/Phi/DeepSeek checkpoints), and the code in this repository was validated end-to-end using `unsloth/DeepSeek-R1-Distill-Llama-8B-unsloth-bnb-4bit` as a development/debugging checkpoint prior to the full Gemma-2 9B run; the LoRA and training configuration are identical across base models.
+## Research Question
+Can low-rank adaptation of quantized Gemma 3 checkpoints improve Persian question answering under single-GPU constraints?
 
-## Motivation
+---
 
-Instruction-following LLMs are predominantly trained and evaluated on English-centric corpora. Persian NLP benchmarks — including extractive QA — remain comparatively underserved, and off-the-shelf multilingual LLMs frequently underperform on Persian relative to high-resource languages due to tokenizer fragmentation, limited pretraining exposure, and scarce instruction data. This project investigates whether efficient, low-rank adaptation of a mid-scale open-weight model (Gemma-2 9B) can close part of this gap on a Persian QA task, under realistic hardware constraints (single-GPU, 4-bit quantization).
+## Experimental Design
 
-## Methodology
-
-### 1. Base Model and Quantization
-- **Backbone:** Gemma-2 9B, loaded in 4-bit (NF4) quantized form via `bitsandbytes` through Unsloth's `FastLanguageModel` API.
-- **Context length:** 2,048 tokens (`max_seq_length`), with Unsloth's internal RoPE scaling support for extension if required.
-- **Precision:** Automatic `bf16`/`fp16` selection based on GPU capability (`is_bfloat16_supported()`).
-
-### 2. Parameter-Efficient Fine-Tuning (LoRA)
-LoRA adapters ([Hu et al., 2021](https://arxiv.org/abs/2106.09685)) are injected into all attention and MLP projection matrices:
-
-| Hyperparameter | Value |
-|---|---|
-| Target modules | `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj` |
-| Rank (`r`) | 128 |
-| `lora_alpha` | 128 |
-| `lora_dropout` | 0 |
-| Bias | none |
-| Gradient checkpointing | Unsloth long-context mode |
-| Random seed | 3407 |
-
-This configuration updates a small fraction of total parameters while leaving the pretrained backbone frozen, substantially reducing the GPU memory footprint relative to full fine-tuning.
-
-### 3. Data
-- **Training format:** ShareGPT-style multi-turn template (`<|im_start|>user ... <|im_end|><|im_start|>assistant ... <|im_end|>`), with the EOS token explicitly appended to each formatted example to prevent unterminated generation at inference time.
-- **Evaluation set:** [`SajjadAyoubi/persian_qa`](https://huggingface.co/datasets/SajjadAyoubi/persian_qa) (validation split), a SQuAD-style extractive Persian QA dataset with `(question, context, answer)` triples.
-
-> **Note on training data provenance:** the formatting function is written generically over `question` / `context` / `answers` fields and is compatible with SQuAD-style Persian QA corpora (e.g. PersianQA/ParsiNLU-style datasets). Practitioners should substitute the specific training corpus used and report its size, license, and split statistics here for full reproducibility.
-
-### 4. Training Configuration
-Supervised fine-tuning is performed with TRL's `SFTTrainer`:
-
-| Hyperparameter | Value |
-|---|---|
-| Per-device batch size | 2 |
-| Gradient accumulation steps | 16 (effective batch size 32) |
-| Max steps | 40 |
-| Learning rate | 2 × 10⁻⁴ |
-| LR schedule | Cosine, 5 warmup steps |
-| Optimizer | 8-bit AdamW (`adamw_8bit`) |
-| Weight decay | 0.05 |
-| Precision | bf16 (Ampere+) / fp16 (fallback) |
-| Seed | 42 |
-
-Experiment tracking and checkpointing are handled via **Weights & Biases**, with support for resuming training from a logged W&B model artifact.
-
-### 5. Evaluation Protocol
-Model outputs are scored against gold references using three complementary metrics, reflecting standard practice in extractive/generative QA evaluation:
-
-- **Exact Match (EM):** strict string-level match after normalization.
-- **Token-level F1:** unigram overlap between predicted and reference answer spans (SQuAD-style).
-- **BERTScore F1** ([Zhang et al., 2020](https://arxiv.org/abs/1904.09675)): contextual embedding similarity, providing a semantics-aware complement to surface-level EM/F1 that is more robust to valid paraphrase or partial answers.
-
-Decoding is performed greedily (`do_sample=False`) with `top_p=0.9`, `temperature=0.7` (inactive under greedy decoding but retained in configuration for sampling-based ablations).
-
-## Repository Structure
-
+```mermaid
+flowchart LR
+    A[PersianQA\nSajjadAyoubi/persian_qa] --> B[Train Split]
+    A --> C[Official Held-Out Split\nvalidation, N = 930]
+    B --> D[QLoRA Fine-Tuning]
+    E[Base Gemma 3 Checkpoint] --> D
+    E --> F[Baseline Evaluation]
+    D --> G[Fine-Tuned Evaluation]
+    F --> H[Paired Comparison]
+    G --> H
 ```
+
+### Task
+- **Dataset:** `SajjadAyoubi/persian_qa`
+- **Evaluation split:** official held-out `validation` split, **N = 930**
+- **Metrics:** Exact Match (EM), token-level F1, answerable-question F1, no-answer F1
+- **Decoding:** greedy decoding
+
+### Fine-Tuning Method
+- **Method:** QLoRA / LoRA on 4-bit quantized checkpoints
+- **Training objective:** answer-only supervision
+- **Comparison protocol:** untuned checkpoint vs. fine-tuned checkpoint on the **same 930 examples**
+- **Statistical reporting:** paired bootstrap confidence intervals
+
+---
+
+## Experimental Configurations
+
+| Setting | Gemma 3 4B | Gemma 3 12B |
+|---|---:|---:|
+| Checkpoint | `unsloth/gemma-3-4b-it-unsloth-bnb-4bit` | `unsloth/gemma-3-12b-it-bnb-4bit` |
+| Quantization | 4-bit | 4-bit |
+| LoRA rank | 16 | 8 |
+| LoRA alpha | 32 | 16 |
+| Learning rate | 1e-4 | 1e-4 |
+| Training steps | 250 | 250 |
+| Gradient accumulation | 8 | 8 |
+| Max context tokens | 560 | 288 |
+| Max new tokens | 72 | 72 |
+| Trainable parameters | 32,788,480 | 32,735,232 |
+| Total parameters | 2,972,340,592 | 6,635,330,160 |
+| Hardware | T4-compatible | T4-compatible |
+
+---
+
+## Main Results
+
+### Controlled Baseline vs. Fine-Tuned Comparison
+
+| Model | Condition | EM | Token F1 | Answerable F1 | No-answer F1 |
+|---|---|---:|---:|---:|---:|
+| Gemma 3 4B | Base | 53.44 | 72.41 | 80.10 | 69.89 |
+| Gemma 3 4B | Fine-tuned | **62.15** | **81.24** | 77.04 | **91.20** |
+| Gemma 3 12B | Base | 60.43 | 75.34 | 80.44 | 74.06 |
+| Gemma 3 12B | Fine-tuned | **63.87** | **80.97** | 76.66 | **86.69** |
+
+### Effect of Fine-Tuning
+
+| Model | Δ EM (pp) | Δ Token F1 (pp) | Δ Answerable F1 (pp) | Δ No-answer F1 (pp) |
+|---|---:|---:|---:|---:|
+| Gemma 3 4B | +8.71 | +8.83 | -3.06 | +21.32 |
+| Gemma 3 12B | +3.44 | +5.63 | -3.79 | +12.63 |
+
+### Statistical Evidence
+
+| Model | Paired 95% CI for Δ F1 (pp) | Paired 95% CI for Δ EM (pp) |
+|---|---|---|
+| Gemma 3 4B | [+6.36, +11.34] | [+5.37, +12.15] |
+| Gemma 3 12B | [+3.38, +7.95] | [+0.22, +6.56] |
+
+---
+
+## Result Visualization
+
+### Overall Token F1
+
+| Model | Base | Fine-tuned |
+|---|---:|---:|
+| Gemma 3 4B | 72.41 | **81.24** |
+| Gemma 3 12B | 75.34 | **80.97** |
+
+```mermaid
+xychart-beta
+    title "Overall Token F1 on PersianQA"
+    x-axis ["4B-Base", "4B-Tuned", "12B-Base", "12B-Tuned"]
+    y-axis "F1" 0 --> 100
+    bar [72.41, 81.24, 75.34, 80.97]
+```
+
+### No-answer F1
+
+| Model | Base | Fine-tuned |
+|---|---:|---:|
+| Gemma 3 4B | 69.89 | **91.20** |
+| Gemma 3 12B | 74.06 | **86.69** |
+
+```mermaid
+xychart-beta
+    title "No-answer F1 on PersianQA"
+    x-axis ["4B-Base", "4B-Tuned", "12B-Base", "12B-Tuned"]
+    y-axis "F1" 0 --> 100
+    bar [69.89, 91.20, 74.06, 86.69]
+```
+
+---
+
+## Interpretation
+Fine-tuning improved **overall held-out performance** in both completed experiments. The improvement was not uniform. In both the 4B and 12B settings, the model became substantially better at **detecting unanswerable questions**, while **answerable-question F1 decreased**. The main empirical conclusion is therefore not merely that QLoRA improves PersianQA performance, but that it changes the model's operating behavior toward stronger abstention.
+
+---
+
+## Methodological Notes
+
+### Gemma 3 4B
+- Full held-out evaluation completed on 930 examples.
+- No context truncation was recorded in the finalized 4B experiment.
+- This is the cleanest completed experiment in the repository.
+
+### Gemma 3 12B
+- Full held-out evaluation completed on 930 examples.
+- The 12B T4 configuration required a much smaller context budget.
+- **820 / 930** examples were truncated.
+- In **45 answerable examples**, truncation removed all gold answer spans from the visible context.
+- The 12B results therefore demonstrate feasibility on T4, but they should not be interpreted as a clean scale comparison against the 4B experiment.
+
+---
+
+## Scope of Claims
+This repository supports the following claims:
+1. **Gemma 3 4B** can be effectively adapted for PersianQA with 4-bit QLoRA on consumer/Colab-class hardware.
+2. **Gemma 3 12B** can be fine-tuned on a **single T4 GPU** under a constrained setup.
+3. In both settings, fine-tuning improves **overall EM/F1** on the held-out split.
+4. The primary gain is stronger **unanswerable-question detection**, not uniformly better answer extraction.
+
+This repository does **not** support a claim that the 12B model is superior to the 4B model under a matched evaluation regime.
+
+---
+
+## Repository Contents
+
+```text
 .
 ├── Fine-Tuning-Gemma2/
-│   └── Gemma2_(9B)_Alpaca.ipynb   # End-to-end training + evaluation notebook
+│   └── Gemma2_(9B)_Alpaca.ipynb        # archival exploratory notebook
+├── Gemma3_4B_PersianQA_*.ipynb         # completed 4B experiment
+├── Gemma3_12B_PersianQA_*.ipynb        # completed 12B experiment
+├── baseline.metrics.json
+├── finetuned.metrics.json
+├── comparison.json
+├── report.md
 ├── README.md
 └── LICENSE
 ```
 
-## Reproducing the Experiment
+---
 
-### Environment
-```bash
-pip install --no-deps bitsandbytes accelerate xformers==0.0.29 peft trl triton
-pip install --no-deps cut_cross_entropy unsloth_zoo
-pip install sentencepiece protobuf datasets huggingface_hub hf_transfer
-pip install --no-deps unsloth
-pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
-```
+## Archival Note on Gemma 2
+The original repository was initiated around a **Gemma 2 9B** exploratory notebook. Those early experiments are retained for archival continuity, but the primary validated results in this repository are the completed **Gemma 3 4B** and **Gemma 3 12B** controlled experiments reported above.
 
-### Credentials
-The notebook expects a Hugging Face access token (for gated checkpoints and/or pushing trained adapters) and a Weights & Biases API key. **Do not hardcode credentials in the notebook.** Supply them at runtime, e.g.:
+---
 
-```python
-from huggingface_hub import login
-from getpass import getpass
-login(token=getpass("HF token: "))
-```
-
-```bash
-wandb login   # prompts interactively; do not pass keys as CLI arguments in shared code
-```
-
-### Execution
-Run the notebook top-to-bottom on a CUDA-enabled GPU (validated on Google Colab; a T4/L4/A100 class GPU is sufficient given 4-bit quantization + LoRA). The notebook performs, in order: (1) environment setup, (2) 4-bit model and tokenizer loading, (3) LoRA adapter injection, (4) data formatting, (5) SFT training with W&B logging, (6) LoRA/merged/GGUF model export, and (7) held-out evaluation with EM, token-F1, and BERTScore.
-
-## Results
-
-Multiple base models and hyperparameter configurations were evaluated on the Persian QA validation set to identify a stable and effective fine-tuning regime. Token-level F1 is used as the primary comparison metric across runs; Exact Match and BERTScore are reported for the best-performing configuration.
-
-### Learning-rate sensitivity (Gemma-2 9B, 4-bit, LoRA r=128)
-
-| Steps | Learning rate | F1 Score | Notes |
-|---|---|---|---|
-| 200 | default (2 × 10⁻⁴) | 0.146 | Unstable; learning rate too high for this LoRA configuration |
-| 200 | 1 × 10⁻⁴ | 0.48 | |
-| 200 | 1 × 10⁻⁵ | 0.49 | |
-| 300 | 1 × 10⁻⁵ | 0.49 | |
-| **1126** | **1 × 10⁻⁵** | **0.49** | **Best run — EM 0.25, BERTScore (F1) 0.664** |
-
-The default learning rate (2 × 10⁻⁴) produced a substantially degraded model (F1 = 0.146), while lowering it by an order of magnitude to 1 × 10⁻⁵ recovered stable training and more than tripled F1. Extending training from 200 to 1,126 steps at this learning rate did not yield further F1 gains on this evaluation set, suggesting the model had converged well before the full training budget was used.
-
-### Comparison across base models
-
-| Model | Steps | Eval Samples | F1 Score |
-|---|---|---|---|
-| **Gemma-2-9B-bnb-4bit** (1 × 10⁻⁵, best run) | 1126 | — | **0.49** |
-| Qwen2-7B | — | 20 | 0.48 |
-| Qwen2-7B | — | 50 | 0.47 |
-| Qwen2-7B | — | 250 | 0.46 |
-| Gemma-3-4B-pt-unsloth-bnb-4bit | 70 | 20 | 0.47 |
-| Qwen2.5-14B-Instruct-bnb-4bit | 70 | 20 | 0.45 |
-| Qwen2.5-14B-bnb-4bit | 140 | 250 | 0.45 |
-
-Under a matched low-resource fine-tuning budget, Gemma-2 9B achieved the highest F1 among the models evaluated, marginally ahead of Qwen2-7B and Gemma-3-4B-pt, and ahead of the larger Qwen2.5-14B variants. Qwen2-7B's F1 declined modestly as the evaluation sample size increased (0.48 → 0.46 from 20 to 250 samples), consistent with the smaller samples giving a noisier, upward-biased estimate; the 250-sample result is the more reliable figure for that model. The two Qwen2.5-14B configurations, despite the larger parameter count, did not outperform the smaller Gemma-2 9B and Gemma-3 4B models under these settings — a result worth investigating further (see Limitations).
-
-> **Caveat:** sample sizes across configurations are small (20–250 examples) and inconsistent between models, so differences of a few F1 points between models should not be over-interpreted. The Gemma-2 9B best-run figures (EM, F1, BERTScore) reflect evaluation on the same 20-example subset described in [Reproducing the Experiment](#reproducing-the-experiment); a full-validation-split re-evaluation is recommended before treating these as final reportable numbers.
-
-## Limitations
-
-- Evaluation sample sizes range from 20 to 250 examples across configurations and are not held constant between models, which limits direct comparability; standard error should be reported once all configurations are re-evaluated on the full validation split.
-- Token-level F1 and EM are known to be brittle to legitimate paraphrase and morphological variation in Persian; BERTScore is reported for the best configuration to partially mitigate this, but is itself sensitive to the choice of underlying encoder and layer, and was not computed for every configuration above.
-- The learning-rate sweep was conducted only for Gemma-2 9B; a comparable sweep for the other base models (Qwen2-7B, Qwen2.5-14B, Gemma-3 4B) would clarify whether their lower F1 reflects the models themselves or under-tuned hyperparameters, particularly for Qwen2.5-14B, whose larger parameter count did not translate into higher F1 here.
-- No comparison against full fine-tuning or alternative PEFT methods (e.g., QLoRA at lower rank, prefix-tuning) is currently included; such ablations would strengthen claims about the efficiency/performance trade-off.
-- The training corpus size, licensing, and Persian-specific preprocessing (e.g., normalization of Arabic vs. Persian character variants, diacritics) are not yet documented and should be specified for reproducibility.
-
-## License
-
-See `LICENSE`. Gemma-2 usage is additionally governed by the [Gemma Terms of Use](https://ai.google.dev/gemma/terms).
-
-## Acknowledgments
-
-Built on the Unsloth fine-tuning framework and Hugging Face's `transformers`, `trl`, and `datasets` ecosystem.
+## Citation-Style Summary
+**Akhoundi-Andujerdi, Mohammad.** *Parameter-Efficient Adaptation of Gemma 3 for Persian Question Answering.* Controlled experiments on PersianQA using 4-bit QLoRA showed that fine-tuning improved overall token F1 from **72.41% to 81.24%** for Gemma 3 4B and from **75.34% to 80.97%** for Gemma 3 12B, with the strongest gains arising from improved no-answer detection.
