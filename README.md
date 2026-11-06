@@ -4,11 +4,11 @@
 
 ## Abstract
 
-We investigate parameter-efficient adaptation of **Gemma 3 4B Instruct** and **Gemma 3 12B Instruct** for Persian question answering. Both models were fine-tuned with 4-bit quantization and Low-Rank Adaptation (LoRA) and evaluated against their respective untuned checkpoints on the same **930 held-out PersianQA examples**. Fine-tuning increased overall token F1 by **8.83 percentage points (4B)** and **5.63 points (12B)**. Gains were driven primarily by improved identification of unanswerable questions; answerable-question F1 decreased in both experiments.
+We investigate parameter-efficient adaptation of **Gemma 3 4B Instruct** and **Gemma 3 12B Instruct** for Persian question answering. Both models were fine-tuned with 4-bit quantization and Low-Rank Adaptation (LoRA), then evaluated against their respective untuned checkpoints on the same **930 held-out PersianQA examples**. Fine-tuning increased overall token F1 by **8.83 percentage points (4B)** and **5.63 points (12B)**. Gains were driven primarily by improved identification of unanswerable questions; answerable-question F1 decreased in both experiments.
 
 ## Method
 
-The experiments use the [PersianQA dataset](https://huggingface.co/datasets/SajjadAyoubi/persian_qa), answer-only supervised fine-tuning, greedy decoding, and paired baseline-versus-adapter evaluation. The dataset's `validation` split is the official held-out evaluation split; no evaluation examples were used for fine-tuning.
+The experiments use the [PersianQA dataset](https://huggingface.co/datasets/SajjadAyoubi/persian_qa), answer-only supervised fine-tuning, greedy decoding, and paired baseline-versus-adapter evaluation. The dataset's `validation` split is the held-out evaluation split; evaluation examples were not used for fine-tuning.
 
 | Configuration | Gemma 3 4B Instruct | Gemma 3 12B Instruct |
 |---|---:|---:|
@@ -37,7 +37,7 @@ The experiments use the [PersianQA dataset](https://huggingface.co/datasets/Sajj
 | | Answerable F1 | **80.44** | 76.66 | −3.79 |
 | | No-answer F1 | 74.06 | **86.69** | **+12.63** |
 
-### Overall F1: baseline versus fine-tuned
+### Overall token F1: baseline versus fine-tuned
 
 ```mermaid
 xychart-beta
@@ -47,7 +47,7 @@ xychart-beta
     bar [72.41, 81.24, 75.34, 80.97]
 ```
 
-### Uncertainty in the paired improvements
+### Paired bootstrap confidence intervals
 
 | Model | Δ Token F1 (95% bootstrap CI, pp) | Δ Exact Match (95% bootstrap CI, pp) |
 |---|---|---|
@@ -56,10 +56,10 @@ xychart-beta
 
 ## Discussion
 
-Both experiments show improved overall PersianQA scores after QLoRA fine-tuning. The improvement is **not uniform across question types**: both models are more effective at abstaining when the passage lacks an answer, while their F1 on answerable examples declines. Thus, aggregate F1 improvements should not be interpreted as uniformly better answer extraction.
+Both experiments show improved overall PersianQA scores after QLoRA fine-tuning. The improvement is **not uniform across question types**: both models became more effective at abstaining when the passage lacks an answer, while their F1 on answerable examples declined. Aggregate F1 improvements should therefore not be interpreted as uniformly better answer extraction.
 
 **Evaluation limitations.** The 4B experiment recorded no context truncation. The memory-constrained 12B experiment truncated **820/930** contexts, and **45 answerable examples** lost all reference-answer spans in the retained context. The models also used different context budgets and LoRA ranks; the results **do not establish that one model size is superior** under a matched evaluation protocol. Each experiment used a single seed and 250 optimizer steps. Exact abstention-phrase matching may undercount semantically equivalent refusals.
 
 ## Conclusion
 
-On the held-out PersianQA split, 4-bit QLoRA increased token F1 by **+8.83 pp for Gemma 3 4B** and **+5.63 pp for Gemma 3 12B**. The primary behavioral change was improved no-answer detection at the cost of lower answerable-question F1.
+On the held-out PersianQA split, 4-bit QLoRA increased token F1 by **8.83 pp for Gemma 3 4B** and **5.63 pp for Gemma 3 12B**. The primary behavioral change was improved no-answer detection, accompanied by lower answerable-question F1.
