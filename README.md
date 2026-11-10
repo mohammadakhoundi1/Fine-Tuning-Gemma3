@@ -4,11 +4,11 @@
 
 ## Abstract
 
-We investigate parameter-efficient adaptation of **Gemma 3 4B Instruct** and **Gemma 3 12B Instruct** for Persian question answering. Both models were fine-tuned with 4-bit quantization and Low-Rank Adaptation (LoRA), then evaluated against their respective untuned checkpoints on the same **930 held-out PersianQA examples**. Fine-tuning increased overall token F1 by **8.83 percentage points (4B)** and **5.63 points (12B)**. Gains were driven primarily by improved identification of unanswerable questions; answerable-question F1 decreased in both experiments.
+We investigate parameter-efficient adaptation of **Gemma 3 4B Instruct** and **Gemma 3 12B Instruct** on Persian question answering dataset.Both models were fine-tuned with 4-bit quantization and Low-Rank Adaptation (LoRA), then evaluated against their on the same **930 held-out PersianQA examples**. Fine-tuning increased overall token F1 by **8.83 percentage points (4B)** and **5.63 points (12B)**. Gains were driven primarily by improved identification of unanswerable questions; answerable-question F1 decreased in both experiments.
 
 ## Method
 
-The experiments use the [PersianQA dataset](https://huggingface.co/datasets/SajjadAyoubi/persian_qa), answer-only supervised fine-tuning, greedy decoding, and paired baseline-versus-adapter evaluation. The dataset's `validation` split is the held-out evaluation split; evaluation examples were not used for fine-tuning.
+The experiments use the [PersianQA dataset](https://huggingface.co/datasets/SajjadAyoubi/persian_qa).
 
 | Configuration | Gemma 3 4B Instruct | Gemma 3 12B Instruct |
 |---|---:|---:|
